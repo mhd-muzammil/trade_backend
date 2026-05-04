@@ -21,24 +21,44 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Database setup
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+try:
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL is not set")
+    engine = create_engine(DATABASE_URL)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base = declarative_base()
+    
+    class TradeRecord(Base):
+        __tablename__ = "trade_records"
+        id = Column(Integer, primary_key=True, index=True)
+        ticket_no = Column(String(50))
+        case_id = Column(String(50))
+        status = Column(String(50))
+        product_name = Column(Text)
+        asp_city = Column(String(100))
+        wip_aging = Column(Integer)
+        created_at = Column(DateTime, default=datetime.utcnow)
 
-# Define a simple model for audit/storage
-class TradeRecord(Base):
-    __tablename__ = "trade_records"
-    id = Column(Integer, primary_key=True, index=True)
-    ticket_no = Column(String(50))
-    case_id = Column(String(50))
-    status = Column(String(50))
-    product_name = Column(Text)
-    asp_city = Column(String(100))
-    wip_aging = Column(Integer)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    Base.metadata.create_all(bind=engine)
+except Exception as e:
+    print(f"PostgreSQL connection failed ({e}). Falling back to SQLite.")
+    DATABASE_URL = "sqlite:///./trade.db"
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base = declarative_base()
+    
+    class TradeRecord(Base):
+        __tablename__ = "trade_records"
+        id = Column(Integer, primary_key=True, index=True)
+        ticket_no = Column(String(50))
+        case_id = Column(String(50))
+        status = Column(String(50))
+        product_name = Column(Text)
+        asp_city = Column(String(100))
+        wip_aging = Column(Integer)
+        created_at = Column(DateTime, default=datetime.utcnow)
 
-# Create tables
-Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Trade Report API")
 
