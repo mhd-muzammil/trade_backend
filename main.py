@@ -539,6 +539,23 @@ async def get_history():
         db.close()
 
 
+@app.delete("/api/history")
+async def clear_history():
+    db = SessionLocal()
+    try:
+        FileHistory.__table__.create(bind=engine, checkfirst=True)
+        count = db.query(FileHistory).count()
+        db.query(FileHistory).delete()
+        db.commit()
+        return {"message": f"Cleared {count} history records"}
+    except Exception as e:
+        db.rollback()
+        print(f"Error clearing history: {e}")
+        return {"message": "Failed to clear history"}
+    finally:
+        db.close()
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
