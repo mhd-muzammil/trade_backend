@@ -364,6 +364,7 @@ async def process_report(file: UploadFile = File(...)):
         # Save to file history
         db = SessionLocal()
         try:
+            FileHistory.__table__.create(bind=engine, checkfirst=True)
             import_record = FileHistory(
                 filename=file.filename,
                 action="Import",
@@ -469,6 +470,7 @@ async def process_multiple_reports(files: List[UploadFile] = File(...)):
     # Save to file history
     db = SessionLocal()
     try:
+        FileHistory.__table__.create(bind=engine, checkfirst=True)
         for file in files:
             matched_stat = next((s for s in file_stats if s["filename"] == file.filename), None)
             tot = matched_stat["total"] if matched_stat else 0
@@ -516,6 +518,8 @@ async def process_multiple_reports(files: List[UploadFile] = File(...)):
 async def get_history():
     db = SessionLocal()
     try:
+        # Ensure file_history table exists
+        FileHistory.__table__.create(bind=engine, checkfirst=True)
         records = db.query(FileHistory).order_by(FileHistory.created_at.desc()).all()
         return [
             {
@@ -528,6 +532,9 @@ async def get_history():
             }
             for r in records
         ]
+    except Exception as e:
+        print(f"Error fetching history: {e}")
+        return []
     finally:
         db.close()
 
