@@ -515,6 +515,8 @@ async def process_multiple_reports(files: List[UploadFile] = File(...)):
 
 
 @app.get("/api/history")
+@app.get("/api/history/")
+@app.get("/api/test-history")
 async def get_history():
     db = SessionLocal()
     try:
@@ -537,6 +539,11 @@ async def get_history():
         return []
     finally:
         db.close()
+
+
+@app.get("/api/check-history")
+async def check_history_endpoint():
+    return {"status": "working", "endpoint": "/api/history is active"}
 
 
 @app.delete("/api/history")
