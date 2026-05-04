@@ -18,69 +18,55 @@ from dotenv import load_dotenv
 IST = timezone(timedelta(hours=5, minutes=30))
 
 def get_ist_now():
-    return datetime.now(IST)
+    return datetime.now(IST).replace(tzinfo=None)
 
 # Load environment variables
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Database setup
+# Normalize postgres URL format
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+from sqlalchemy.orm import declarative_base
+
+Base = declarative_base()
+
+class TradeRecord(Base):
+    __tablename__ = "trade_records"
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_no = Column(String(50))
+    case_id = Column(String(50))
+    status = Column(String(50))
+    product_name = Column(Text)
+    asp_city = Column(String(100))
+    wip_aging = Column(Integer)
+    created_at = Column(DateTime, default=get_ist_now)
+
+class FileHistory(Base):
+    __tablename__ = "file_history"
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String(255))
+    action = Column(String(50))
+    total_records = Column(Integer)
+    filtered_records = Column(Integer)
+    created_at = Column(DateTime, default=get_ist_now)
+
 try:
     if not DATABASE_URL:
         raise ValueError("DATABASE_URL is not set")
     engine = create_engine(DATABASE_URL)
+    # Test connection
+    with engine.connect() as conn:
+        pass
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base = declarative_base()
-    
-    class TradeRecord(Base):
-        __tablename__ = "trade_records"
-        id = Column(Integer, primary_key=True, index=True)
-        ticket_no = Column(String(50))
-        case_id = Column(String(50))
-        status = Column(String(50))
-        product_name = Column(Text)
-        asp_city = Column(String(100))
-        wip_aging = Column(Integer)
-        created_at = Column(DateTime, default=get_ist_now)
-
-    class FileHistory(Base):
-        __tablename__ = "file_history"
-        id = Column(Integer, primary_key=True, index=True)
-        filename = Column(String(255))
-        action = Column(String(50))
-        total_records = Column(Integer)
-        filtered_records = Column(Integer)
-        created_at = Column(DateTime, default=get_ist_now)
-
     Base.metadata.create_all(bind=engine)
 except Exception as e:
     print(f"PostgreSQL connection failed ({e}). Falling back to SQLite.")
     DATABASE_URL = "sqlite:///./trade.db"
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    Base = declarative_base()
-    
-    class TradeRecord(Base):
-        __tablename__ = "trade_records"
-        id = Column(Integer, primary_key=True, index=True)
-        ticket_no = Column(String(50))
-        case_id = Column(String(50))
-        status = Column(String(50))
-        product_name = Column(Text)
-        asp_city = Column(String(100))
-        wip_aging = Column(Integer)
-        created_at = Column(DateTime, default=get_ist_now)
-
-    class FileHistory(Base):
-        __tablename__ = "file_history"
-        id = Column(Integer, primary_key=True, index=True)
-        filename = Column(String(255))
-        action = Column(String(50))
-        total_records = Column(Integer)
-        filtered_records = Column(Integer)
-        created_at = Column(DateTime, default=get_ist_now)
-
     Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Trade Report API")
