@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import io
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -14,6 +14,11 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def get_ist_now():
+    return datetime.now(IST)
 
 # Load environment variables
 load_dotenv()
@@ -37,7 +42,16 @@ try:
         product_name = Column(Text)
         asp_city = Column(String(100))
         wip_aging = Column(Integer)
-        created_at = Column(DateTime, default=datetime.utcnow)
+        created_at = Column(DateTime, default=get_ist_now)
+
+    class FileHistory(Base):
+        __tablename__ = "file_history"
+        id = Column(Integer, primary_key=True, index=True)
+        filename = Column(String(255))
+        action = Column(String(50))
+        total_records = Column(Integer)
+        filtered_records = Column(Integer)
+        created_at = Column(DateTime, default=get_ist_now)
 
     Base.metadata.create_all(bind=engine)
 except Exception as e:
@@ -56,7 +70,16 @@ except Exception as e:
         product_name = Column(Text)
         asp_city = Column(String(100))
         wip_aging = Column(Integer)
-        created_at = Column(DateTime, default=datetime.utcnow)
+        created_at = Column(DateTime, default=get_ist_now)
+
+    class FileHistory(Base):
+        __tablename__ = "file_history"
+        id = Column(Integer, primary_key=True, index=True)
+        filename = Column(String(255))
+        action = Column(String(50))
+        total_records = Column(Integer)
+        filtered_records = Column(Integer)
+        created_at = Column(DateTime, default=get_ist_now)
 
     Base.metadata.create_all(bind=engine)
 
@@ -338,6 +361,32 @@ async def process_report(file: UploadFile = File(...)):
 
         city_counts_json = json.dumps(result.get("city_counts", {}))
 
+        # Save to file history
+        db = SessionLocal()
+        try:
+            import_record = FileHistory(
+                filename=file.filename,
+                action="Import",
+                total_records=result["total_records"],
+                filtered_records=result["filtered_records"],
+                created_at=get_ist_now()
+            )
+            export_record = FileHistory(
+                filename=filename,
+                action="Export",
+                total_records=result["total_records"],
+                filtered_records=result["filtered_records"],
+                created_at=get_ist_now()
+            )
+            db.add(import_record)
+            db.add(export_record)
+            db.commit()
+        except Exception as db_err:
+            print(f"Error logging file history: {db_err}")
+            db.rollback()
+        finally:
+            db.close()
+
         headers = {
             'Content-Disposition': f'attachment; filename="{filename}"',
             'X-Records-Processed': str(result["total_records"]),
@@ -417,6 +466,37 @@ async def process_multiple_reports(files: List[UploadFile] = File(...)):
 
     city_counts_json = json.dumps(total_city_counts)
 
+    # Save to file history
+    db = SessionLocal()
+    try:
+        for file in files:
+            matched_stat = next((s for s in file_stats if s["filename"] == file.filename), None)
+            tot = matched_stat["total"] if matched_stat else 0
+            filt = matched_stat["filtered"] if matched_stat else 0
+            import_record = FileHistory(
+                filename=file.filename,
+                action="Import",
+                total_records=tot,
+                filtered_records=filt,
+                created_at=get_ist_now()
+            )
+            db.add(import_record)
+
+        export_record = FileHistory(
+            filename=filename,
+            action="Export",
+            total_records=total_processed,
+            filtered_records=total_filtered,
+            created_at=get_ist_now()
+        )
+        db.add(export_record)
+        db.commit()
+    except Exception as db_err:
+        print(f"Error logging file history in multiple: {db_err}")
+        db.rollback()
+    finally:
+        db.close()
+
     headers = {
         'Content-Disposition': f'attachment; filename="{filename}"',
         'X-Records-Processed': str(total_processed),
@@ -430,6 +510,26 @@ async def process_multiple_reports(files: List[UploadFile] = File(...)):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=headers
     )
+
+
+@app.get("/api/history")
+async def get_history():
+    db = SessionLocal()
+    try:
+        records = db.query(FileHistory).order_by(FileHistory.created_at.desc()).all()
+        return [
+            {
+                "id": r.id,
+                "filename": r.filename,
+                "action": r.action,
+                "total_records": r.total_records,
+                "filtered_records": r.filtered_records,
+                "created_at": r.created_at.isoformat() if r.created_at else None
+            }
+            for r in records
+        ]
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":
