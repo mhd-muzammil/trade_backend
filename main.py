@@ -74,7 +74,7 @@ app = FastAPI(title="Trade Report API")
 # CORS — configurable via CORS_ORIGINS env var (comma-separated), defaults to allow all
 cors_origins = [
     origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "https://demo.bazhilgroups.in,http://localhost:5173").split(",")
+    for origin in os.getenv("CORS_ORIGINS", "https://trade-backend-qk0h.onrender.com/,http://localhost:5173").split(",")
     if origin.strip()
 ]
 allow_all_origins = cors_origins == ["*"]
