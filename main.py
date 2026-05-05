@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
+from fastapi import Request
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -501,13 +502,11 @@ async def process_multiple_reports(files: List[UploadFile] = File(...)):
     )
 
 
-@app.get("/api/history")
-@app.get("/api/history/")
-@app.get("/api/test-history")
-async def get_history():
+@app.api_route("/api/history", methods=["GET", "HEAD"])
+@app.api_route("/api/history/", methods=["GET", "HEAD"])
+async def get_history(request: Request):
     db = SessionLocal()
     try:
-        # Ensure file_history table exists
         FileHistory.__table__.create(bind=engine, checkfirst=True)
         records = db.query(FileHistory).order_by(FileHistory.created_at.desc()).all()
         return [
@@ -526,7 +525,6 @@ async def get_history():
         return []
     finally:
         db.close()
-
 
 @app.get("/api/check-history")
 async def check_history_endpoint():
