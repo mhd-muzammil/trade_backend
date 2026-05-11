@@ -86,7 +86,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     # ADD Content-Disposition HERE:
-    expose_headers=["X-Records-Processed", "X-Records-Filtered", "X-File-Stats", "X-City-Stats", "Content-Disposition"],
+    expose_headers=["X-Records-Processed", "X-Records-Filtered", "X-Duplicates-Removed", "X-File-Stats", "X-City-Stats", "Content-Disposition"],
 )
 
 @app.get("/health")
@@ -147,6 +147,51 @@ def process_single_file(contents: bytes, filename: str) -> dict:
         "filename": filename,
         "city_counts": city_counts
     }
+
+
+def calculate_city_counts(df: pd.DataFrame) -> dict:
+    """Return ASP City counts for the final output rows."""
+    if df.empty or "ASP City" not in df.columns:
+        return {}
+
+    city_series = df["ASP City"].fillna("Unknown").astype(str).str.strip()
+    city_series = city_series.replace("", "Unknown")
+    return {str(k): int(v) for k, v in city_series.value_counts().to_dict().items()}
+
+
+def remove_duplicate_tickets(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Remove duplicate Ticket No rows, keeping the most complete row per ticket."""
+    if df.empty or "Ticket No" not in df.columns:
+        return df, 0
+
+    working_df = df.copy()
+    ticket_key = working_df["Ticket No"].fillna("").astype(str).str.strip().str.upper()
+    duplicate_mask = ticket_key != ""
+    duplicate_count = int(ticket_key[duplicate_mask].duplicated().sum())
+
+    if duplicate_count == 0:
+        return working_df, 0
+
+    working_df["_ticket_key"] = ticket_key
+    working_df["_original_order"] = range(len(working_df))
+    working_df["_non_empty_fields"] = working_df[TARGET_COLUMNS].notna().sum(axis=1)
+
+    for col in TARGET_COLUMNS:
+        working_df["_non_empty_fields"] -= working_df[col].fillna("").astype(str).str.strip().eq("").astype(int)
+
+    dedupe_candidates = working_df[working_df["_ticket_key"] != ""].sort_values(
+        by=["_ticket_key", "_non_empty_fields", "_original_order"],
+        ascending=[True, False, True],
+    )
+    deduped = dedupe_candidates.drop_duplicates(subset=["_ticket_key"], keep="first")
+    rows_without_ticket = working_df[working_df["_ticket_key"] == ""]
+
+    final_df = pd.concat([deduped, rows_without_ticket], ignore_index=True)
+    final_df = final_df.sort_values("_original_order").drop(
+        columns=["_ticket_key", "_original_order", "_non_empty_fields"]
+    )
+
+    return final_df[TARGET_COLUMNS].reset_index(drop=True), duplicate_count
 
 
 def add_pivot_table_sheet(writer, df_source):
@@ -329,7 +374,9 @@ async def process_report(file: UploadFile = File(...)):
     try:
         contents = await file.read()
         result = process_single_file(contents, file.filename)
-        df_final = result["df"]
+        df_final, duplicates_removed = remove_duplicate_tickets(result["df"])
+        final_filtered_records = len(df_final)
+        city_counts_json = json.dumps(calculate_city_counts(df_final))
 
         # Generate the new Excel file
         output = io.BytesIO()
@@ -347,8 +394,6 @@ async def process_report(file: UploadFile = File(...)):
         date_str = datetime.now().strftime("%d-%m-%Y")
         filename = f"Trade_Report_{date_str}.xlsx"
 
-        city_counts_json = json.dumps(result.get("city_counts", {}))
-
         # Save to file history
         db = SessionLocal()
         try:
@@ -357,14 +402,14 @@ async def process_report(file: UploadFile = File(...)):
                 filename=file.filename,
                 action="Import",
                 total_records=result["total_records"],
-                filtered_records=result["filtered_records"],
+                filtered_records=final_filtered_records,
                 created_at=get_ist_now()
             )
             export_record = FileHistory(
                 filename=filename,
                 action="Export",
                 total_records=result["total_records"],
-                filtered_records=result["filtered_records"],
+                filtered_records=final_filtered_records,
                 created_at=get_ist_now()
             )
             db.add(import_record)
@@ -379,7 +424,8 @@ async def process_report(file: UploadFile = File(...)):
         headers = {
             'Content-Disposition': f'attachment; filename="{filename}"',
             'X-Records-Processed': str(result["total_records"]),
-            'X-Records-Filtered': str(result["filtered_records"]),
+            'X-Records-Filtered': str(final_filtered_records),
+            'X-Duplicates-Removed': str(duplicates_removed),
             'X-City-Stats': city_counts_json
         }
 
@@ -404,8 +450,6 @@ async def process_multiple_reports(files: List[UploadFile] = File(...)):
     all_dfs = []
     file_stats = []
     total_processed = 0
-    total_filtered = 0
-    total_city_counts = {}
 
     for file in files:
         if not file.filename.endswith('.xlsx'):
@@ -419,11 +463,6 @@ async def process_multiple_reports(files: List[UploadFile] = File(...)):
             result = process_single_file(contents, file.filename)
             all_dfs.append(result["df"])
             total_processed += result["total_records"]
-            total_filtered += result["filtered_records"]
-            
-            for k, v in result.get("city_counts", {}).items():
-                total_city_counts[k] = total_city_counts.get(k, 0) + v
-
             file_stats.append({
                 "filename": result["filename"],
                 "total": result["total_records"],
@@ -436,6 +475,9 @@ async def process_multiple_reports(files: List[UploadFile] = File(...)):
 
     # Combine all DataFrames
     combined_df = pd.concat(all_dfs, ignore_index=True)
+    combined_df, duplicates_removed = remove_duplicate_tickets(combined_df)
+    final_filtered_records = len(combined_df)
+    total_city_counts = calculate_city_counts(combined_df)
 
     # Generate the combined Excel file
     output = io.BytesIO()
@@ -476,7 +518,7 @@ async def process_multiple_reports(files: List[UploadFile] = File(...)):
             filename=filename,
             action="Export",
             total_records=total_processed,
-            filtered_records=total_filtered,
+            filtered_records=final_filtered_records,
             created_at=get_ist_now()
         )
         db.add(export_record)
@@ -490,7 +532,8 @@ async def process_multiple_reports(files: List[UploadFile] = File(...)):
     headers = {
         'Content-Disposition': f'attachment; filename="{filename}"',
         'X-Records-Processed': str(total_processed),
-        'X-Records-Filtered': str(total_filtered),
+        'X-Records-Filtered': str(final_filtered_records),
+        'X-Duplicates-Removed': str(duplicates_removed),
         'X-File-Stats': json.dumps(file_stats),
         'X-City-Stats': city_counts_json
     }
