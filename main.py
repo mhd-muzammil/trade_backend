@@ -548,6 +548,28 @@ async def clear_history():
         db.close()
 
 
+@app.post("/api/save-result")
+async def save_result(request: Request):
+    try:
+        data = await request.json()
+        with open("latest_result.json", "w") as f:
+            json.dump(data, f)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/latest-result")
+async def get_latest_result():
+    if os.path.exists("latest_result.json"):
+        try:
+            with open("latest_result.json", "r") as f:
+                return json.load(f)
+        except Exception as e:
+            return None
+    return None
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True)
