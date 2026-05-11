@@ -25,6 +25,10 @@ def get_ist_now():
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+RESULT_STORE_PATH = os.getenv(
+    "RESULT_STORE_PATH",
+    os.path.join("/tmp" if os.name != "nt" else ".", "latest_result.json")
+)
 
 # Normalize postgres URL format
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
@@ -595,20 +599,24 @@ async def clear_history():
 async def save_result(request: Request):
     try:
         data = await request.json()
-        with open("latest_result.json", "w") as f:
+        result_dir = os.path.dirname(os.path.abspath(RESULT_STORE_PATH))
+        os.makedirs(result_dir, exist_ok=True)
+        with open(RESULT_STORE_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f)
         return {"status": "success"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error saving latest result cache: {e}")
+        return {"status": "skipped", "reason": "latest result cache is unavailable"}
 
 
 @app.get("/api/latest-result")
 async def get_latest_result():
-    if os.path.exists("latest_result.json"):
+    if os.path.exists(RESULT_STORE_PATH):
         try:
-            with open("latest_result.json", "r") as f:
+            with open(RESULT_STORE_PATH, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
+            print(f"Error reading latest result cache: {e}")
             return None
     return None
 
